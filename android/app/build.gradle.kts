@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.example.research"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -24,8 +24,8 @@ android {
         applicationId = "com.example.research"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 21 // Minimum for BLE support
+        targetSdk = 33 // Target for new Bluetooth permissions
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

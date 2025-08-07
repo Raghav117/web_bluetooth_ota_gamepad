@@ -108,10 +108,6 @@ class _CommandScreenState extends State<CommandScreen> {
 
     // Start sending the command immediately
     _sendCommand(command);
-    // And start a timer to send it repeatedly
-    _commandTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
-      _sendCommand(command);
-    });
 
     setState(() {
       _activeCommand = command;
