@@ -1,7 +1,6 @@
-import 'dart:async' show StreamSubscription;
+import 'dart:async' show StreamSubscription, Timer;
 import 'dart:convert' show utf8;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 class CommandScreen extends StatefulWidget {
@@ -25,6 +24,9 @@ class _CommandScreenState extends State<CommandScreen> {
   String _statusMessage = "Initializing...";
   String _lastCommand = "None";
   bool _isReady = false;
+
+  Timer? _commandTimer;
+  String? _activeCommand;
 
   @override
   void initState() {
@@ -74,7 +76,7 @@ class _CommandScreenState extends State<CommandScreen> {
             setState(() {
               _commandCharacteristic = char;
               _isReady = true;
-              _statusMessage = "✅ Ready! Press any key to send a command.";
+              _statusMessage = "✅ Ready! Use the gamepad to send commands.";
             });
             print("✅ Command characteristic found!");
             return; // Exit the function once we've found our characteristic
@@ -98,22 +100,52 @@ class _CommandScreenState extends State<CommandScreen> {
     }
   }
 
-  /// Sends a single character command over BLE.
-  Future<void> _sendCommand(String key) async {
+  void _handlePress(String command) {
+    if (_activeCommand != null || !_isReady)
+      return; // Prevent multiple commands
+
+    print("Sent direction command: $command");
+
+    // Start sending the command immediately
+    _sendCommand(command);
+    // And start a timer to send it repeatedly
+    _commandTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
+      _sendCommand(command);
+    });
+
+    setState(() {
+      _activeCommand = command;
+    });
+  }
+
+  /// Handles the release event of a button.
+  void _handleRelease() {
+    if (_activeCommand == null) return; // Nothing to release
+
+    _commandTimer?.cancel();
+    _sendCommand("STOP"); // Tell the car to stop moving
+    setState(() {
+      _activeCommand = null;
+    });
+  }
+
+  /// Sends a directional command over BLE.
+  Future<void> _sendCommand(String direction) async {
     if (_commandCharacteristic == null || !_isReady) {
       print("Cannot send command: Characteristic not ready or not found.");
       return;
     }
 
     try {
-      // Encode the key string into bytes and write it.
+      // Encode the direction string into bytes and write it.
       await _commandCharacteristic!.write(
-        utf8.encode(key),
-        withoutResponse: true, // Use `writeWithoutResponse` for higher speed.
+        utf8.encode(direction),
+        withoutResponse: false, // Use `writeWithoutResponse` for higher speed.
       );
-      print("Sent key command: $key");
+      print("Sent direction command: $direction");
       setState(() {
-        _lastCommand = key; // Update the UI to show the last command sent.
+        _lastCommand =
+            direction; // Update the UI to show the last command sent.
       });
     } catch (e) {
       print("❌ Error sending command: ${e.toString()}");
@@ -124,92 +156,164 @@ class _CommandScreenState extends State<CommandScreen> {
     }
   }
 
-  /// The keyboard event handler that triggers the command.
-  void _handleKey(RawKeyEvent event) {
-    // We only care about key down events to avoid sending the same command twice.
-    if (event is RawKeyDownEvent) {
-      // `event.logicalKey.keyLabel` gives us the character representation (e.g., "a", "W", "5", "F5").
-      final String key = event.logicalKey.keyLabel;
-      _sendCommand(key);
-    }
+  /// Creates a directional button for the gamepad
+  Widget _buildDirectionButton({
+    required String direction,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return Container(
+      width: 80,
+      height: 80,
+      child: GestureDetector(
+        onTapDown: (_) => _handlePress(direction),
+        onTapUp: (_) => _handleRelease(),
+        onTapCancel: () =>
+            _handleRelease(), // Also stop if the gesture is canceled
+
+        child: Icon(icon, size: 32),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // A FocusNode is required for the RawKeyboardListener to capture events.
-    final FocusNode focusNode = FocusNode();
-    // Request focus so it starts listening as soon as the screen is visible.
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => focusNode.requestFocus(),
-    );
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Gamepad Controller'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: ListView(
+            children: [
+              // Device info
+              Text(
+                "Controlling: ${widget.device.platformName}",
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 24),
 
-    return RawKeyboardListener(
-      focusNode: focusNode,
-      onKey: _isReady
-          ? _handleKey
-          : null, // Only listen for keys when the characteristic is ready.
-      child: Scaffold(
-        appBar: AppBar(title: const Text('Keyboard Controller')),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  "Controlling: ${widget.device.platformName}",
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 24),
-                Icon(
-                  _isReady
-                      ? Icons.check_circle_outline_rounded
-                      : Icons.error_outline_rounded,
-                  color: _isReady ? Colors.green : Colors.red,
-                  size: 60,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  _statusMessage,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-                const SizedBox(height: 40),
-                Text(
-                  'Last Command Sent:',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _lastCommand,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+              // Status indicator
+              Icon(
+                _isReady
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.error_outline_rounded,
+                color: _isReady ? Colors.green : Colors.red,
+                size: 60,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _statusMessage,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+              const SizedBox(height: 40),
+
+              // Gamepad
+              Container(
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
                     ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      'Directional Controls',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Up button
+                    _buildDirectionButton(
+                      direction: 'UP',
+                      icon: Icons.keyboard_arrow_up,
+                      color: Colors.blue,
+                      onPressed: () => _sendCommand('UP'),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Middle row with left and right buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildDirectionButton(
+                          direction: 'LEFT',
+                          icon: Icons.keyboard_arrow_left,
+                          color: Colors.orange,
+                          onPressed: () => _sendCommand('LEFT'),
+                        ),
+                        const SizedBox(width: 32),
+                        _buildDirectionButton(
+                          direction: 'RIGHT',
+                          icon: Icons.keyboard_arrow_right,
+                          color: Colors.orange,
+                          onPressed: () => _sendCommand('RIGHT'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Down button
+                    _buildDirectionButton(
+                      direction: 'DOWN',
+                      icon: Icons.keyboard_arrow_down,
+                      color: Colors.blue,
+                      onPressed: () => _sendCommand('DOWN'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 40),
+
+              // Last command display
+              Text(
+                'Last Command Sent:',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _lastCommand,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
                   ),
                 ),
-                const SizedBox(height: 40),
-                if (!_isReady)
-                  ElevatedButton.icon(
-                    onPressed: _findCommandCharacteristic,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text("Retry Search"),
-                  ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 24),
+
+              // Retry button if not ready
+              if (!_isReady)
+                ElevatedButton.icon(
+                  onPressed: _findCommandCharacteristic,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text("Retry Search"),
+                ),
+            ],
           ),
         ),
       ),

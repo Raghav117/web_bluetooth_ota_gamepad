@@ -251,16 +251,18 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
         utf8.encode("OPEN"),
         withoutResponse: false,
       );
-      await Future.delayed(const Duration(milliseconds: 10));
+      // await Future.delayed(const Duration(milliseconds: 10));
 
       // Step 2: Send file size
       ByteData byteData = ByteData(4)
         ..setUint32(0, _firmwareData!.length, Endian.little);
       await _writeCharacteristic!.write(
         byteData.buffer.asUint8List(),
-        withoutResponse: true,
+        withoutResponse: false,
       );
-      await Future.delayed(const Duration(milliseconds: 10));
+      // await Future.delayed(const Duration(milliseconds: 10));
+
+      // await Future.delayed(const Duration(milliseconds: 0));
 
       // Step 3: Send firmware data in chunks
       int chunkSize = _connectedDevice!.mtuNow - 3;
@@ -270,9 +272,11 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
             : i + chunkSize;
         List<int> chunk = _firmwareData!.sublist(i, end);
         await _writeCharacteristic!.write(chunk, withoutResponse: true);
-        await Future.delayed(
-          const Duration(milliseconds: 10),
-        ); // Small delay to prevent buffer overflow
+        await Future.delayed(const Duration(milliseconds: 2));
+
+        // await Future.delayed(
+        //   const Duration(milliseconds: 10),
+        // ); // Small delay to prevent buffer overflow
 
         setState(() {
           _uploadProgress = (i + chunk.length) / _firmwareData!.length;
@@ -281,7 +285,7 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
         });
       }
 
-      await Future.delayed(const Duration(milliseconds: 10));
+      // await Future.delayed(const Duration(milliseconds: 10));
 
       // Step 4: Send "DONE" command
       await _writeCharacteristic!.write(
