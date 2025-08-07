@@ -1,0 +1,510 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:typed_data';
+import 'dart:async';
+
+void main() {
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'ESP32 BLE Firmware Updater',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
+      ),
+      home: const FirmwareUpdaterPage(),
+    );
+  }
+}
+
+class FirmwareUpdaterPage extends StatefulWidget {
+  const FirmwareUpdaterPage({super.key});
+
+  @override
+  State<FirmwareUpdaterPage> createState() => _FirmwareUpdaterPageState();
+}
+
+class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
+  // BLE Configuration
+  static const int chunkSize = 512;
+  static const int delayBetweenChunks = 20; // milliseconds
+
+  // State variables
+  bool _isScanning = false;
+  bool _isConnected = false;
+  bool _isUploading = false;
+  double _uploadProgress = 0.0;
+  String _statusMessage = "Ready to scan for BLE devices";
+  
+  BluetoothDevice? _connectedDevice;
+  BluetoothCharacteristic? _writeCharacteristic;
+  List<ScanResult> _scanResults = [];
+  Uint8List? _firmwareData;
+  String? _selectedFileName;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeBLE();
+  }
+
+  void _initializeBLE() {
+    // Check if BLE is supported
+    FlutterBluePlus.adapterState.listen((state) {
+      if (state == BluetoothAdapterState.on) {
+        setState(() {
+          _statusMessage = "Bluetooth is ready";
+        });
+      } else {
+        setState(() {
+          _statusMessage = "Bluetooth is not available: $state";
+        });
+      }
+    });
+  }
+
+  Future<void> _startScan() async {
+    try {
+              setState(() {
+          _isScanning = true;
+          _scanResults.clear();
+          _statusMessage = "Scanning for BLE devices...";
+        });
+
+      // Start scanning
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 10),
+        androidUsesFineLocation: false,
+      );
+
+      // Listen for scan results
+              FlutterBluePlus.scanResults.listen((results) {
+          setState(() {
+            _scanResults = results;
+          });
+        });
+
+      // Stop scanning after timeout
+      Timer(const Duration(seconds: 10), () {
+        setState(() {
+          _isScanning = false;
+          _statusMessage = "Scan completed. Found ${_scanResults.length} BLE device(s)";
+        });
+      });
+    } catch (e) {
+      setState(() {
+        _isScanning = false;
+        _statusMessage = "Error scanning: $e";
+      });
+    }
+  }
+
+  Future<void> _connectToDevice(BluetoothDevice device) async {
+    try {
+      setState(() {
+        _statusMessage = "Connecting to ${device.platformName}...";
+      });
+
+      await device.connect(timeout: const Duration(seconds: 10));
+      
+      setState(() {
+        _connectedDevice = device;
+        _isConnected = true;
+        _statusMessage = "Connected to ${device.platformName}";
+      });
+
+      // Discover services
+      List<BluetoothService> services = await device.discoverServices();
+      
+      setState(() {
+        _statusMessage = "Connected to ${device.platformName}. Found ${services.length} services.";
+      });
+      
+      // For now, we'll just store the first write characteristic we find
+      // You can modify this later to look for specific services/characteristics
+      for (BluetoothService service in services) {
+        for (BluetoothCharacteristic characteristic in service.characteristics) {
+          if (characteristic.properties.write || characteristic.properties.writeWithoutResponse) {
+            _writeCharacteristic = characteristic;
+            setState(() {
+              _statusMessage = "Found write characteristic: ${characteristic.uuid}";
+            });
+            break;
+          }
+        }
+        if (_writeCharacteristic != null) break;
+      }
+      
+      if (_writeCharacteristic == null) {
+        setState(() {
+          _statusMessage = "No write characteristic found on device";
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _statusMessage = "Connection failed: $e";
+      });
+    }
+  }
+
+  Future<void> _disconnect() async {
+    if (_connectedDevice != null) {
+      await _connectedDevice!.disconnect();
+      setState(() {
+        _connectedDevice = null;
+        _isConnected = false;
+        _writeCharacteristic = null;
+        _statusMessage = "Disconnected from device";
+      });
+    }
+  }
+
+  Future<void> _selectFirmwareFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['bin'],
+        allowMultiple: false,
+      );
+
+      if (result != null) {
+        setState(() {
+          _selectedFileName = result.files.first.name;
+          _firmwareData = result.files.first.bytes;
+          _statusMessage = "Selected file: ${result.files.first.name} (${_firmwareData!.length} bytes)";
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _statusMessage = "Error selecting file: $e";
+      });
+    }
+  }
+
+  Future<void> _uploadFirmware() async {
+    // Check prerequisites
+    if (_firmwareData == null) {
+      setState(() {
+        _statusMessage = "❌ Error: No firmware file selected. Please select a .bin file first.";
+      });
+      return;
+    }
+
+    if (_writeCharacteristic == null) {
+      setState(() {
+        _statusMessage = "❌ Error: No write characteristic found. Please connect to a device first.";
+      });
+      return;
+    }
+
+    if (!_isConnected) {
+      setState(() {
+        _statusMessage = "❌ Error: Not connected to any device. Please connect first.";
+      });
+      return;
+    }
+
+    try {
+      setState(() {
+        _isUploading = true;
+        _uploadProgress = 0.0;
+        _statusMessage = "🚀 Starting firmware upload...";
+      });
+
+      int totalBytes = _firmwareData!.length;
+      int bytesSent = 0;
+
+      setState(() {
+        _statusMessage = "📤 Preparing to upload ${totalBytes} bytes in ${(totalBytes / chunkSize).ceil()} chunks...";
+      });
+
+      // Upload in chunks
+      for (int i = 0; i < totalBytes; i += chunkSize) {
+        int endIndex = (i + chunkSize < totalBytes) ? i + chunkSize : totalBytes;
+        Uint8List chunk = _firmwareData!.sublist(i, endIndex);
+
+        try {
+          // Write chunk to BLE characteristic
+          await _writeCharacteristic!.write(chunk, withoutResponse: true);
+          
+          bytesSent += chunk.length;
+          double progress = bytesSent / totalBytes;
+
+          setState(() {
+            _uploadProgress = progress;
+            _statusMessage = "📤 Uploading... ${bytesSent}/${totalBytes} bytes (${(progress * 100).toStringAsFixed(1)}%)";
+          });
+
+          // Wait between chunks
+          await Future.delayed(Duration(milliseconds: delayBetweenChunks));
+          
+        } catch (writeError) {
+          setState(() {
+            _isUploading = false;
+            _statusMessage = "❌ Error writing chunk ${(i / chunkSize) + 1}: $writeError";
+          });
+          return;
+        }
+      }
+
+      setState(() {
+        _isUploading = false;
+        _statusMessage = "✅ Firmware upload completed successfully! Uploaded ${totalBytes} bytes.";
+      });
+      
+    } catch (e) {
+      setState(() {
+        _isUploading = false;
+        _statusMessage = "❌ Upload failed: $e";
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('ESP32 BLE Firmware Updater'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Status Card
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Status',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(_statusMessage),
+                    if (_isConnected && _connectedDevice != null) ...[
+                      const SizedBox(height: 8),
+                      Text('Connected to: ${_connectedDevice!.platformName}'),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Scan Section
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Device Discovery',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _isScanning ? null : _startScan,
+                            icon: _isScanning 
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.search),
+                            label: Text(_isScanning ? 'Scanning...' : 'Scan for BLE Devices'),
+                          ),
+                        ),
+                        if (_isConnected) ...[
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            onPressed: _disconnect,
+                            icon: const Icon(Icons.bluetooth_disabled),
+                            label: const Text('Disconnect'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (_scanResults.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        'Found Devices:',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      ...(_scanResults.map((result) => ListTile(
+                        title: Text(result.device.platformName.isNotEmpty 
+                            ? result.device.platformName 
+                            : 'Unknown Device'),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(result.device.remoteId.toString()),
+                            if (result.advertisementData.serviceUuids.isNotEmpty)
+                              Text('Services: ${result.advertisementData.serviceUuids.length}'),
+                            Text('RSSI: ${result.rssi} dBm'),
+                          ],
+                        ),
+                        trailing: _isConnected && _connectedDevice == result.device
+                            ? const Icon(Icons.check_circle, color: Colors.green)
+                            : ElevatedButton(
+                                onPressed: _isConnected ? null : () => _connectToDevice(result.device),
+                                child: const Text('Connect'),
+                              ),
+                      ))),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // File Selection Section
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Firmware File',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _selectFirmwareFile,
+                            icon: const Icon(Icons.file_upload),
+                            label: const Text('Select .bin File'),
+                          ),
+                        ),
+                        if (_selectedFileName != null) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _selectedFileName!,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (_firmwareData != null) ...[
+                      const SizedBox(height: 8),
+                      Text('File size: ${_firmwareData!.length} bytes'),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Upload Section
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Firmware Upload',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: (_isConnected && _firmwareData != null && !_isUploading) 
+                          ? _uploadFirmware 
+                          : null,
+                      icon: _isUploading 
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.upload),
+                      label: Text(_isUploading ? 'Uploading...' : 'Upload Firmware'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: (_isConnected && _firmwareData != null && !_isUploading) 
+                            ? Colors.green 
+                            : Colors.grey,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                    if (!_isConnected || _firmwareData == null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _isUploading ? '' : 
+                        !_isConnected ? '⚠️ Connect to a device first' :
+                        '⚠️ Select a firmware file first',
+                        style: TextStyle(
+                          color: Colors.orange,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                    if (_isUploading) ...[
+                      const SizedBox(height: 16),
+                      LinearProgressIndicator(value: _uploadProgress),
+                      const SizedBox(height: 8),
+                      Text('Progress: ${(_uploadProgress * 100).toStringAsFixed(1)}%'),
+                    ],
+                    
+                    // Debug information
+                    if (_isConnected) ...[
+                      const SizedBox(height: 16),
+                      Card(
+                        color: Colors.grey[100],
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Debug Info:',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                              Text('Connected: ${_isConnected ? "Yes" : "No"}'),
+                              Text('File Selected: ${_firmwareData != null ? "Yes (${_firmwareData!.length} bytes)" : "No"}'),
+                              Text('Write Characteristic: ${_writeCharacteristic != null ? "Found (${_writeCharacteristic!.uuid})" : "Not found"}'),
+                              Text('Upload State: ${_isUploading ? "Uploading" : "Ready"}'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _disconnect();
+    super.dispose();
+  }
+}
