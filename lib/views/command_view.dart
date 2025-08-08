@@ -28,6 +28,11 @@ class _CommandScreenState extends State<CommandScreen> {
   Timer? _commandTimer;
   String? _activeCommand;
 
+  // Speed control variables
+  double _speedValue = 200.0; // Default speed value
+  Timer? _speedDebouncer;
+  String _lastSpeedCommand = "SPEED_200";
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +57,8 @@ class _CommandScreenState extends State<CommandScreen> {
   void dispose() {
     // Clean up the listener when the screen is closed.
     _connectionStateSubscription?.cancel();
+    _commandTimer?.cancel();
+    _speedDebouncer?.cancel();
     super.dispose();
   }
 
@@ -125,6 +132,29 @@ class _CommandScreenState extends State<CommandScreen> {
     });
   }
 
+  /// Handles speed slider changes with debouncing
+  void _onSpeedChanged(double value) {
+    setState(() {
+      _speedValue = value;
+    });
+
+    // Cancel previous debouncer
+    _speedDebouncer?.cancel();
+
+    // Start new debouncer
+    _speedDebouncer = Timer(const Duration(milliseconds: 500), () {
+      if (_isReady) {
+        int speedInt = value.round();
+        String speedCommand = "SPEED_$speedInt";
+        _sendCommand(speedCommand);
+        setState(() {
+          _lastSpeedCommand = speedCommand;
+        });
+        print("Sent speed command: $speedCommand");
+      }
+    });
+  }
+
   /// Sends a directional command over BLE.
   Future<void> _sendCommand(String direction) async {
     if (_commandCharacteristic == null || !_isReady) {
@@ -173,6 +203,95 @@ class _CommandScreenState extends State<CommandScreen> {
     );
   }
 
+  /// Creates the speed control widget
+  Widget _buildSpeedControl() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Speed Control',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${_speedValue.round()}',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: Theme.of(context).colorScheme.primary,
+              inactiveTrackColor: Theme.of(
+                context,
+              ).colorScheme.primary.withOpacity(0.3),
+              thumbColor: Theme.of(context).colorScheme.primary,
+              overlayColor: Theme.of(
+                context,
+              ).colorScheme.primary.withOpacity(0.2),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+            ),
+            child: Slider(
+              value: _speedValue,
+              min: 1.0,
+              max: 255.0,
+              divisions: 254, // 255 values (1-255)
+              onChanged: _isReady ? _onSpeedChanged : null,
+              label: '${_speedValue.round()}',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Slow', style: Theme.of(context).textTheme.bodySmall),
+              Text('Fast', style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Last Speed Command: $_lastSpeedCommand',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -208,6 +327,10 @@ class _CommandScreenState extends State<CommandScreen> {
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
               const SizedBox(height: 40),
+
+              // Speed Control Section
+              _buildSpeedControl(),
+              const SizedBox(height: 24),
 
               // Gamepad
               Container(
