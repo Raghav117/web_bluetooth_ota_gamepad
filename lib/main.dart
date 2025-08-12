@@ -17,11 +17,12 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ESP32 BLE Firmware Updater',
+      title: 'ESP32 BLE CAR',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
+      debugShowCheckedModeBanner: false,
       home: const FirmwareUpdaterPage(),
     );
   }
@@ -49,7 +50,8 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
   bool _isConnected = false;
   bool _isUploading = false;
   double _uploadProgress = 0.0;
-  String _statusMessage = "Ready to scan for BLE devices";
+  String _statusMessage = "Initializing Bluetooth...";
+  BluetoothAdapterState _bluetoothState = BluetoothAdapterState.unknown;
 
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _writeCharacteristic;
@@ -64,6 +66,22 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
   void initState() {
     super.initState();
     _initializeBLE();
+    _checkBluetoothSupport();
+  }
+
+  void _checkBluetoothSupport() async {
+    try {
+      // Check if Bluetooth is supported
+      final adapterState = await FlutterBluePlus.adapterState.first;
+      if (adapterState == BluetoothAdapterState.unavailable) {
+        setState(() {
+          _bluetoothState = BluetoothAdapterState.unavailable;
+          _statusMessage = "❌ Bluetooth is not supported on this device.";
+        });
+      }
+    } catch (e) {
+      print("Error checking Bluetooth support: $e");
+    }
   }
 
   @override
@@ -74,21 +92,87 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
   }
 
   void _initializeBLE() {
+    // Listen to Bluetooth adapter state changes
     FlutterBluePlus.adapterState.listen((state) {
-      if (state == BluetoothAdapterState.on) {
-        setState(() {
-          _statusMessage = "Bluetooth is ready";
-        });
-      } else {
-        setState(() {
-          _statusMessage = "Bluetooth is not available: $state";
-        });
-      }
+      setState(() {
+        _bluetoothState = state;
+        switch (state) {
+          case BluetoothAdapterState.on:
+            _statusMessage = "Bluetooth is ready";
+            break;
+          case BluetoothAdapterState.off:
+            _statusMessage =
+                "❌ Bluetooth is turned off. Please enable Bluetooth in settings.";
+            break;
+          case BluetoothAdapterState.turningOn:
+            _statusMessage = "Bluetooth is turning on...";
+            break;
+          case BluetoothAdapterState.turningOff:
+            _statusMessage = "Bluetooth is turning off...";
+            break;
+          case BluetoothAdapterState.unauthorized:
+            _statusMessage =
+                "❌ Bluetooth permission denied. Please grant Bluetooth permissions in settings.";
+            break;
+          case BluetoothAdapterState.unavailable:
+            _statusMessage = "❌ Bluetooth is not supported on this device.";
+            break;
+          case BluetoothAdapterState.unknown:
+            _statusMessage = "Bluetooth state unknown...";
+            break;
+        }
+      });
     });
   }
 
+  Future<void> _requestBluetoothPermissions() async {
+    try {
+      // Try to turn on Bluetooth and request permissions
+      await FlutterBluePlus.turnOn();
+    } catch (e) {
+      print("Error requesting Bluetooth permissions: $e");
+      setState(() {
+        _statusMessage =
+            "❌ Failed to enable Bluetooth: $e\nPlease enable Bluetooth in your device settings.";
+      });
+    }
+  }
+
+  Future<void> _openBluetoothSettings() async {
+    try {
+      await FlutterBluePlus.turnOn();
+    } catch (e) {
+      // If we can't turn on Bluetooth programmatically, show a dialog
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Bluetooth Required'),
+            content: const Text(
+              'This app requires Bluetooth to be enabled. Please go to your device settings and turn on Bluetooth.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _startScan() async {
-    // The scanning logic remains the same, it correctly filters by service UUID.
+    // Check if Bluetooth is enabled before scanning
+    if (_bluetoothState != BluetoothAdapterState.on) {
+      setState(() {
+        _statusMessage =
+            "❌ Cannot scan: Bluetooth is not enabled. Current state: $_bluetoothState";
+      });
+      return;
+    }
+
     try {
       setState(() {
         _isScanning = true;
@@ -126,6 +210,22 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
         _statusMessage = "Error scanning: $e";
       });
       print("Scan error: $e");
+
+      // If the error is about Bluetooth being off, update the state
+      if (e.toString().contains("Bluetooth must be turned on")) {
+        setState(() {
+          _bluetoothState = BluetoothAdapterState.off;
+          _statusMessage =
+              "❌ Bluetooth is turned off. Please enable Bluetooth in settings.";
+        });
+      } else if (e.toString().contains("permission") ||
+          e.toString().contains("denied")) {
+        setState(() {
+          _bluetoothState = BluetoothAdapterState.unauthorized;
+          _statusMessage =
+              "❌ Bluetooth permission denied. Please grant Bluetooth permissions in settings.";
+        });
+      }
     }
   }
 
@@ -265,14 +365,17 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
       // await Future.delayed(const Duration(milliseconds: 0));
 
       // Step 3: Send firmware data in chunks
-      int chunkSize = _connectedDevice!.mtuNow - 3;
+      int chunkSize = 247 - 3;
       for (int i = 0; i < _firmwareData!.length; i += chunkSize) {
         int end = (i + chunkSize > _firmwareData!.length)
             ? _firmwareData!.length
             : i + chunkSize;
+        print(i);
+        print(end);
+        print(chunkSize);
         List<int> chunk = _firmwareData!.sublist(i, end);
         await _writeCharacteristic!.write(chunk, withoutResponse: true);
-        await Future.delayed(const Duration(milliseconds: 2));
+        await Future.delayed(const Duration(milliseconds: 50));
 
         // await Future.delayed(
         //   const Duration(milliseconds: 10),
@@ -354,7 +457,32 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 8),
-                    Text(_statusMessage),
+                    Row(
+                      children: [
+                        Icon(
+                          _bluetoothState == BluetoothAdapterState.on
+                              ? Icons.bluetooth_connected
+                              : Icons.bluetooth_disabled,
+                          color: _bluetoothState == BluetoothAdapterState.on
+                              ? Colors.green
+                              : Colors.red,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(_statusMessage)),
+                      ],
+                    ),
+                    if (_bluetoothState != BluetoothAdapterState.on) ...[
+                      const SizedBox(height: 8),
+                      ElevatedButton.icon(
+                        onPressed: _openBluetoothSettings,
+                        icon: const Icon(Icons.bluetooth),
+                        label: const Text('Turn On Bluetooth'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
                     if (_isConnected) ...[
                       const SizedBox(height: 8),
                       Text('Device: ${_connectedDevice!.platformName}'),
@@ -378,11 +506,37 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 16),
+                    if (_bluetoothState != BluetoothAdapterState.on) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning, color: Colors.orange),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Bluetooth must be enabled to scan for devices',
+                                style: TextStyle(color: Colors.orange[800]),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     Row(
                       children: [
                         Expanded(
                           child: ElevatedButton.icon(
-                            onPressed: _isScanning || _isConnected
+                            onPressed:
+                                (_isScanning ||
+                                    _isConnected ||
+                                    _bluetoothState != BluetoothAdapterState.on)
                                 ? null
                                 : _startScan,
                             icon: _isScanning
@@ -444,83 +598,89 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
             const SizedBox(height: 16),
 
             // File Selection Card - No changes needed
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Firmware File',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 16),
-                    if (_selectedFileName != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8.0),
-                        child: Text(
-                          'Selected: $_selectedFileName',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _isUploading ? null : _selectFirmwareFile,
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('Select Firmware (.bin)'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Upload Card - No changes needed
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Upload',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed:
-                            (_firmwareData == null ||
-                                !_isConnected ||
-                                _isUploading)
-                            ? null
-                            : _uploadFirmware,
-                        icon: _isUploading
-                            ? const SizedBox.shrink()
-                            : const Icon(Icons.upload_file),
-                        label: Text(
-                          _isUploading ? 'UPLOADING...' : 'Upload to ESP32',
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                        ),
-                      ),
-                    ),
-                    if (_isUploading) ...[
-                      const SizedBox(height: 16),
-                      LinearProgressIndicator(value: _uploadProgress),
-                    ],
-                  ],
-                ),
-              ),
-            ),
+            bluetooth_ota_widget(context),
           ],
         ),
       ),
+    );
+  }
+
+  Column bluetooth_ota_widget(BuildContext context) {
+    return Column(
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Firmware File',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 16),
+                if (_selectedFileName != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: Text(
+                      'Selected: $_selectedFileName',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isUploading ? null : _selectFirmwareFile,
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('Select Firmware (.bin)'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Upload Card - No changes needed
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Upload',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed:
+                        (_firmwareData == null || !_isConnected || _isUploading)
+                        ? null
+                        : _uploadFirmware,
+                    icon: _isUploading
+                        ? const SizedBox.shrink()
+                        : const Icon(Icons.upload_file),
+                    label: Text(
+                      _isUploading ? 'UPLOADING...' : 'Upload to ESP32',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                if (_isUploading) ...[
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(value: _uploadProgress),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

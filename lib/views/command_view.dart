@@ -29,7 +29,7 @@ class _CommandScreenState extends State<CommandScreen> {
   String? _activeCommand;
 
   // Speed control variables
-  double _speedValue = 200.0; // Default speed value
+  double _speedValue = 100.0; // Default speed value
   Timer? _speedDebouncer;
   String _lastSpeedCommand = "SPEED_200";
 
@@ -145,7 +145,7 @@ class _CommandScreenState extends State<CommandScreen> {
     _speedDebouncer = Timer(const Duration(milliseconds: 500), () {
       if (_isReady) {
         int speedInt = value.round();
-        String speedCommand = "SPEED_$speedInt";
+        String speedCommand = "SPEED_${speedInt + 105}";
         _sendCommand(speedCommand);
         setState(() {
           _lastSpeedCommand = speedCommand;
@@ -264,12 +264,12 @@ class _CommandScreenState extends State<CommandScreen> {
               overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
             ),
             child: Slider(
-              value: _speedValue,
+              value: (_speedValue),
               min: 1.0,
-              max: 255.0,
-              divisions: 254, // 255 values (1-255)
+              max: 100.0,
+              divisions: 50, // 255 values (1-255)
               onChanged: _isReady ? _onSpeedChanged : null,
-              label: '${_speedValue.round()}',
+              label: '${(_speedValue).round()}',
             ),
           ),
           const SizedBox(height: 8),
@@ -281,12 +281,12 @@ class _CommandScreenState extends State<CommandScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          Text(
-            'Last Speed Command: $_lastSpeedCommand',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
-          ),
+          // Text(
+          //   'Last Speed Command: $_lastSpeedCommand',
+          //   style: Theme.of(
+          //     context,
+          //   ).textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
+          // ),
         ],
       ),
     );
