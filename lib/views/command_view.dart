@@ -29,9 +29,9 @@ class _CommandScreenState extends State<CommandScreen> {
   String? _activeCommand;
 
   // Speed control variables
-  double _speedValue = 100.0; // Default speed value
+  double _speedValue = 1.0; // Default speed value
   Timer? _speedDebouncer;
-  String _lastSpeedCommand = "SPEED_200";
+  String _lastSpeedCommand = "SPEED_100";
 
   @override
   void initState() {
@@ -145,7 +145,7 @@ class _CommandScreenState extends State<CommandScreen> {
     _speedDebouncer = Timer(const Duration(milliseconds: 500), () {
       if (_isReady) {
         int speedInt = value.round();
-        String speedCommand = "SPEED_${speedInt + 105}";
+        String speedCommand = "SPEED_${speedInt + 0}";
         _sendCommand(speedCommand);
         setState(() {
           _lastSpeedCommand = speedCommand;
@@ -266,8 +266,8 @@ class _CommandScreenState extends State<CommandScreen> {
             child: Slider(
               value: (_speedValue),
               min: 1.0,
-              max: 100.0,
-              divisions: 50, // 255 values (1-255)
+              max: 255.0,
+              divisions: 255, // 255 values (1-255)
               onChanged: _isReady ? _onSpeedChanged : null,
               label: '${(_speedValue).round()}',
             ),
