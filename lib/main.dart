@@ -61,6 +61,10 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
   Uint8List? _firmwareData;
   String? _selectedFileName;
   List<BluetoothService> _discoveredServices = [];
+  
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _otaSectionKey = GlobalKey();
+  bool _showFirmwareSection = false;
 
   @override
   void initState() {
@@ -88,6 +92,7 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
   void dispose() {
     // Disconnect from any device when the widget is removed.
     _disconnect();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -303,6 +308,7 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
       _writeCharacteristic = null;
       _discoveredServices.clear();
       _statusMessage = "Disconnected from device";
+      _showFirmwareSection = false;
     });
   }
 
@@ -441,6 +447,7 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
         ],
       ),
       body: SingleChildScrollView(
+        controller: _scrollController,
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -597,8 +604,74 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
             ),
             const SizedBox(height: 16),
 
-            // File Selection Card - No changes needed
-            bluetooth_ota_widget(context),
+            // CTAs shown only after connection
+            if (_isConnected) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                CommandScreen(device: _connectedDevice!),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.sports_esports),
+                      label: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16.0),
+                        child: Text('Gamepad Controller'),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        textStyle: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        minimumSize: const Size.fromHeight(64),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _showFirmwareSection = true;
+                        });
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          final ctx = _otaSectionKey.currentContext;
+                          if (ctx != null) {
+                            Scrollable.ensureVisible(
+                              ctx,
+                              duration: const Duration(milliseconds: 500),
+                              curve: Curves.easeInOut,
+                            );
+                          }
+                        });
+                      },
+                      icon: const Icon(Icons.system_update_alt),
+                      label: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16.0),
+                        child: Text('Firmware Update'),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        textStyle: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        minimumSize: const Size.fromHeight(64),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // File Selection + Upload shows only after Firmware Update CTA
+            if (_showFirmwareSection) bluetooth_ota_widget(context),
           ],
         ),
       ),
@@ -607,6 +680,7 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
 
   Column bluetooth_ota_widget(BuildContext context) {
     return Column(
+      key: _otaSectionKey,
       children: [
         Card(
           child: Padding(

@@ -2,6 +2,10 @@ import 'dart:async' show StreamSubscription, Timer;
 import 'dart:convert' show utf8;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:research/controllers/ultrasonic_controller.dart';
+import 'package:research/controllers/infrared_controller.dart';
+import 'package:research/views/ultrasonic_control.dart';
+import 'package:research/views/infrared_control.dart';
 
 class CommandScreen extends StatefulWidget {
   // We receive the connected device from the Firmware Updater screen.
@@ -32,6 +36,9 @@ class _CommandScreenState extends State<CommandScreen> {
   double _speedValue = 1.0; // Default speed value
   Timer? _speedDebouncer;
   String _lastSpeedCommand = "SPEED_100";
+  
+  final UltrasonicController _ultrasonicController = UltrasonicController();
+  final InfraredController _infraredController = InfraredController();
 
   @override
   void initState() {
@@ -59,6 +66,8 @@ class _CommandScreenState extends State<CommandScreen> {
     _connectionStateSubscription?.cancel();
     _commandTimer?.cancel();
     _speedDebouncer?.cancel();
+    _ultrasonicController.dispose();
+    _infraredController.dispose();
     super.dispose();
   }
 
@@ -327,6 +336,29 @@ class _CommandScreenState extends State<CommandScreen> {
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
               const SizedBox(height: 40),
+
+              // Ultrasonic Control Section
+              UltrasonicControl(
+                controller: _ultrasonicController,
+                onSendCommand: (command) {
+                  // Only send when ready
+                  if (_isReady) {
+                    _sendCommand(command);
+                  }
+                },
+              ),
+              const SizedBox(height: 24),
+
+              // Infrared Control Section
+              InfraredControl(
+                controller: _infraredController,
+                onSendCommand: (command) {
+                  if (_isReady) {
+                    _sendCommand(command);
+                  }
+                },
+              ),
+              const SizedBox(height: 24),
 
               // Speed Control Section
               _buildSpeedControl(),
