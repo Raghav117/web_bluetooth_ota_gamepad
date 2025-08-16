@@ -38,9 +38,9 @@ class FirmwareUpdaterPage extends StatefulWidget {
 class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
   // BLE Configuration to match the provided ESP32 code
   // The ESP32 code uses ONE characteristic for everything.
-  static const String serviceUuid = "66443771-D481-49B0-BE32-8CE24AC0F09C";
+  static const String serviceUuid = "88881231-A981-99B0-BA32-1BD54A51B97C";
   static const String writeCharacteristicUuid =
-      "66443772-D481-49B0-BE32-8CE24AC0F09C";
+      "88881232-A981-99B0-BA32-1BD54A51B97C";
   // NOTE: The notify characteristic has been removed as it's not in the Arduino code.
 
   final Guid myServiceUuid = Guid(serviceUuid);
@@ -61,7 +61,7 @@ class _FirmwareUpdaterPageState extends State<FirmwareUpdaterPage> {
   Uint8List? _firmwareData;
   String? _selectedFileName;
   List<BluetoothService> _discoveredServices = [];
-  
+
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _otaSectionKey = GlobalKey();
   bool _showFirmwareSection = false;

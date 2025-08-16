@@ -20,7 +20,7 @@ class CommandScreen extends StatefulWidget {
 class _CommandScreenState extends State<CommandScreen> {
   // The specific UUID for sending commands, as per your request.
   static const String commandCharacteristicUuidString =
-      "66443773-D481-49B0-BE32-8CE24AC0F09C";
+      "88881233-A981-99B0-BA32-1BD54A51B97C";
   final Guid commandCharacteristicUuid = Guid(commandCharacteristicUuidString);
 
   BluetoothCharacteristic? _commandCharacteristic;
@@ -36,7 +36,7 @@ class _CommandScreenState extends State<CommandScreen> {
   double _speedValue = 1.0; // Default speed value
   Timer? _speedDebouncer;
   String _lastSpeedCommand = "SPEED_100";
-  
+
   final UltrasonicController _ultrasonicController = UltrasonicController();
   final InfraredController _infraredController = InfraredController();
 
