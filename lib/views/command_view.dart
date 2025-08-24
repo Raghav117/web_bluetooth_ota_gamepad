@@ -7,6 +7,28 @@ import 'package:research/controllers/infrared_controller.dart';
 import 'package:research/views/ultrasonic_control.dart';
 import 'package:research/views/infrared_control.dart';
 
+// Motor configuration model
+class MotorConfig {
+  final String speed; // L, M, H
+  final String direction; // CW, ACW
+
+  MotorConfig({required this.speed, required this.direction});
+
+  @override
+  String toString() => '${speed}_$direction';
+}
+
+// Direction configuration model
+class DirectionConfig {
+  final MotorConfig leftMotor;
+  final MotorConfig rightMotor;
+
+  DirectionConfig({required this.leftMotor, required this.rightMotor});
+
+  String toCommand() =>
+      '${leftMotor.speed}_${rightMotor.speed}_${leftMotor.direction}_${rightMotor.direction}';
+}
+
 class CommandScreen extends StatefulWidget {
   // We receive the connected device from the Firmware Updater screen.
   final BluetoothDevice device;
@@ -32,10 +54,25 @@ class _CommandScreenState extends State<CommandScreen> {
   Timer? _commandTimer;
   String? _activeCommand;
 
-  // Speed control variables
-  double _speedValue = 1.0; // Default speed value
-  Timer? _speedDebouncer;
-  String _lastSpeedCommand = "SPEED_100";
+  // Motor configuration for each direction
+  Map<String, DirectionConfig> _motorConfigs = {
+    'UP': DirectionConfig(
+      leftMotor: MotorConfig(speed: 'M', direction: 'CW'),
+      rightMotor: MotorConfig(speed: 'M', direction: 'CW'),
+    ),
+    'DOWN': DirectionConfig(
+      leftMotor: MotorConfig(speed: 'M', direction: 'ACW'),
+      rightMotor: MotorConfig(speed: 'M', direction: 'ACW'),
+    ),
+    'LEFT': DirectionConfig(
+      leftMotor: MotorConfig(speed: 'M', direction: 'ACW'),
+      rightMotor: MotorConfig(speed: 'M', direction: 'CW'),
+    ),
+    'RIGHT': DirectionConfig(
+      leftMotor: MotorConfig(speed: 'M', direction: 'CW'),
+      rightMotor: MotorConfig(speed: 'M', direction: 'ACW'),
+    ),
+  };
 
   final UltrasonicController _ultrasonicController = UltrasonicController();
   final InfraredController _infraredController = InfraredController();
@@ -65,7 +102,6 @@ class _CommandScreenState extends State<CommandScreen> {
     // Clean up the listener when the screen is closed.
     _connectionStateSubscription?.cancel();
     _commandTimer?.cancel();
-    _speedDebouncer?.cancel();
     _ultrasonicController.dispose();
     _infraredController.dispose();
     super.dispose();
@@ -117,12 +153,13 @@ class _CommandScreenState extends State<CommandScreen> {
   }
 
   void _handlePress(String command) {
-    if (_activeCommand != null || !_isReady)
-      return; // Prevent multiple commands
-
     print("Sent direction command: $command");
 
-    // Start sending the command immediately
+    if (_activeCommand != null || !_isReady) {
+      return; // Prevent multiple commands
+    }
+
+    // Send the command directly since it's already the motor command
     _sendCommand(command);
 
     setState(() {
@@ -138,29 +175,6 @@ class _CommandScreenState extends State<CommandScreen> {
     _sendCommand("STOP"); // Tell the car to stop moving
     setState(() {
       _activeCommand = null;
-    });
-  }
-
-  /// Handles speed slider changes with debouncing
-  void _onSpeedChanged(double value) {
-    setState(() {
-      _speedValue = value;
-    });
-
-    // Cancel previous debouncer
-    _speedDebouncer?.cancel();
-
-    // Start new debouncer
-    _speedDebouncer = Timer(const Duration(milliseconds: 500), () {
-      if (_isReady) {
-        int speedInt = value.round();
-        String speedCommand = "SPEED_${speedInt + 0}";
-        _sendCommand(speedCommand);
-        setState(() {
-          _lastSpeedCommand = speedCommand;
-        });
-        print("Sent speed command: $speedCommand");
-      }
     });
   }
 
@@ -191,6 +205,455 @@ class _CommandScreenState extends State<CommandScreen> {
     }
   }
 
+  /// Shows the motor configuration dialog for all directions
+  void _showMotorConfigDialog() {
+    // Create temporary copies of all configurations
+    Map<String, DirectionConfig> tempConfigs = Map.from(_motorConfigs);
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return Dialog(
+              child: Container(
+                width: MediaQuery.of(context).size.width * 0.95,
+                height: MediaQuery.of(context).size.height * 0.8,
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    // Header
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Configure Motor Settings',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const Divider(),
+
+                    // Content
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: ['UP', 'DOWN', 'LEFT', 'RIGHT'].map((
+                            direction,
+                          ) {
+                            DirectionConfig config = tempConfigs[direction]!;
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              child: ExpansionTile(
+                                title: Row(
+                                  children: [
+                                    Icon(
+                                      direction == 'UP'
+                                          ? Icons.keyboard_arrow_up
+                                          : direction == 'DOWN'
+                                          ? Icons.keyboard_arrow_down
+                                          : direction == 'LEFT'
+                                          ? Icons.keyboard_arrow_left
+                                          : Icons.keyboard_arrow_right,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '$direction Direction',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.all(12.0),
+                                    child: Column(
+                                      children: [
+                                        // Left Motor Configuration
+                                        Card(
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(12.0),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'Left Motor (LM)',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .titleSmall
+                                                      ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                ),
+                                                const SizedBox(height: 8),
+
+                                                // Speed selection
+                                                Text(
+                                                  'Speed:',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.bodySmall,
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: ['L', 'M', 'H'].map((
+                                                    speed,
+                                                  ) {
+                                                    return Expanded(
+                                                      child: RadioListTile<String>(
+                                                        title: Text(
+                                                          speed,
+                                                          style: Theme.of(
+                                                            context,
+                                                          ).textTheme.bodySmall,
+                                                        ),
+                                                        value: speed,
+                                                        groupValue: config
+                                                            .leftMotor
+                                                            .speed,
+                                                        onChanged: (value) {
+                                                          setState(() {
+                                                            tempConfigs[direction] = DirectionConfig(
+                                                              leftMotor: MotorConfig(
+                                                                speed: value!,
+                                                                direction: config
+                                                                    .leftMotor
+                                                                    .direction,
+                                                              ),
+                                                              rightMotor: config
+                                                                  .rightMotor,
+                                                            );
+                                                          });
+                                                        },
+                                                        contentPadding:
+                                                            EdgeInsets.zero,
+                                                        dense: true,
+                                                      ),
+                                                    );
+                                                  }).toList(),
+                                                ),
+
+                                                const SizedBox(height: 8),
+
+                                                // Direction selection
+                                                Text(
+                                                  'Direction:',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.bodySmall,
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: RadioListTile<String>(
+                                                        title: const Text(
+                                                          'CW',
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                        subtitle: const Text(
+                                                          'Clockwise',
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                          ),
+                                                        ),
+                                                        value: 'CW',
+                                                        groupValue: config
+                                                            .leftMotor
+                                                            .direction,
+                                                        onChanged: (value) {
+                                                          setState(() {
+                                                            tempConfigs[direction] =
+                                                                DirectionConfig(
+                                                                  leftMotor: MotorConfig(
+                                                                    speed: config
+                                                                        .leftMotor
+                                                                        .speed,
+                                                                    direction:
+                                                                        value!,
+                                                                  ),
+                                                                  rightMotor: config
+                                                                      .rightMotor,
+                                                                );
+                                                          });
+                                                        },
+                                                        contentPadding:
+                                                            EdgeInsets.zero,
+                                                        dense: true,
+                                                      ),
+                                                    ),
+                                                    Expanded(
+                                                      child: RadioListTile<String>(
+                                                        title: const Text(
+                                                          'ACW',
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                        subtitle: const Text(
+                                                          'Anti-clockwise',
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                          ),
+                                                        ),
+                                                        value: 'ACW',
+                                                        groupValue: config
+                                                            .leftMotor
+                                                            .direction,
+                                                        onChanged: (value) {
+                                                          setState(() {
+                                                            tempConfigs[direction] =
+                                                                DirectionConfig(
+                                                                  leftMotor: MotorConfig(
+                                                                    speed: config
+                                                                        .leftMotor
+                                                                        .speed,
+                                                                    direction:
+                                                                        value!,
+                                                                  ),
+                                                                  rightMotor: config
+                                                                      .rightMotor,
+                                                                );
+                                                          });
+                                                        },
+                                                        contentPadding:
+                                                            EdgeInsets.zero,
+                                                        dense: true,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+
+                                        const SizedBox(height: 12),
+
+                                        // Right Motor Configuration
+                                        Card(
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(12.0),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'Right Motor (RM)',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .titleSmall
+                                                      ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                ),
+                                                const SizedBox(height: 8),
+
+                                                // Speed selection
+                                                Text(
+                                                  'Speed:',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.bodySmall,
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: ['L', 'M', 'H'].map((
+                                                    speed,
+                                                  ) {
+                                                    return Expanded(
+                                                      child: RadioListTile<String>(
+                                                        title: Text(
+                                                          speed,
+                                                          style: Theme.of(
+                                                            context,
+                                                          ).textTheme.bodySmall,
+                                                        ),
+                                                        value: speed,
+                                                        groupValue: config
+                                                            .rightMotor
+                                                            .speed,
+                                                        onChanged: (value) {
+                                                          setState(() {
+                                                            tempConfigs[direction] = DirectionConfig(
+                                                              leftMotor: config
+                                                                  .leftMotor,
+                                                              rightMotor: MotorConfig(
+                                                                speed: value!,
+                                                                direction: config
+                                                                    .rightMotor
+                                                                    .direction,
+                                                              ),
+                                                            );
+                                                          });
+                                                        },
+                                                        contentPadding:
+                                                            EdgeInsets.zero,
+                                                        dense: true,
+                                                      ),
+                                                    );
+                                                  }).toList(),
+                                                ),
+
+                                                const SizedBox(height: 8),
+
+                                                // Direction selection
+                                                Text(
+                                                  'Direction:',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.bodySmall,
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: RadioListTile<String>(
+                                                        title: const Text(
+                                                          'CW',
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                        subtitle: const Text(
+                                                          'Clockwise',
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                          ),
+                                                        ),
+                                                        value: 'CW',
+                                                        groupValue: config
+                                                            .rightMotor
+                                                            .direction,
+                                                        onChanged: (value) {
+                                                          setState(() {
+                                                            tempConfigs[direction] =
+                                                                DirectionConfig(
+                                                                  leftMotor: config
+                                                                      .leftMotor,
+                                                                  rightMotor: MotorConfig(
+                                                                    speed: config
+                                                                        .rightMotor
+                                                                        .speed,
+                                                                    direction:
+                                                                        value!,
+                                                                  ),
+                                                                );
+                                                          });
+                                                        },
+                                                        contentPadding:
+                                                            EdgeInsets.zero,
+                                                        dense: true,
+                                                      ),
+                                                    ),
+                                                    Expanded(
+                                                      child: RadioListTile<String>(
+                                                        title: const Text(
+                                                          'ACW',
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                        subtitle: const Text(
+                                                          'Anti-clockwise',
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                          ),
+                                                        ),
+                                                        value: 'ACW',
+                                                        groupValue: config
+                                                            .rightMotor
+                                                            .direction,
+                                                        onChanged: (value) {
+                                                          setState(() {
+                                                            tempConfigs[direction] =
+                                                                DirectionConfig(
+                                                                  leftMotor: config
+                                                                      .leftMotor,
+                                                                  rightMotor: MotorConfig(
+                                                                    speed: config
+                                                                        .rightMotor
+                                                                        .speed,
+                                                                    direction:
+                                                                        value!,
+                                                                  ),
+                                                                );
+                                                          });
+                                                        },
+                                                        contentPadding:
+                                                            EdgeInsets.zero,
+                                                        dense: true,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+
+                    // Actions
+                    const Divider(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              this.setState(() {
+                                _motorConfigs = tempConfigs;
+                              });
+                              Navigator.of(context).pop();
+                            },
+                            child: const Text('Save All'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// Creates a directional button for the gamepad
   Widget _buildDirectionButton({
     required String direction,
@@ -199,104 +662,36 @@ class _CommandScreenState extends State<CommandScreen> {
     required VoidCallback onPressed,
   }) {
     return Container(
-      width: 80,
-      height: 80,
-      child: GestureDetector(
-        onTapDown: (_) => _handlePress(direction),
-        onTapUp: (_) => _handleRelease(),
-        onTapCancel: () =>
-            _handleRelease(), // Also stop if the gesture is canceled
-
-        child: Icon(icon, size: 32),
-      ),
-    );
-  }
-
-  /// Creates the speed control widget
-  Widget _buildSpeedControl() {
-    return Container(
-      padding: const EdgeInsets.all(24),
+      width: MediaQuery.of(context).size.width * 0.07, // Responsive width
+      height: MediaQuery.of(context).size.width * 0.07, // Square aspect ratio
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
+        color: Theme.of(context).colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
+            blurRadius: 4,
             offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Speed Control',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${_speedValue.round()}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: Theme.of(context).colorScheme.primary,
-              inactiveTrackColor: Theme.of(
-                context,
-              ).colorScheme.primary.withOpacity(0.3),
-              thumbColor: Theme.of(context).colorScheme.primary,
-              overlayColor: Theme.of(
-                context,
-              ).colorScheme.primary.withOpacity(0.2),
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
-            ),
-            child: Slider(
-              value: (_speedValue),
-              min: 1.0,
-              max: 255.0,
-              divisions: 255, // 255 values (1-255)
-              onChanged: _isReady ? _onSpeedChanged : null,
-              label: '${(_speedValue).round()}',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTapDown: (_) => _handlePress(direction),
+          onTapUp: (_) => _handleRelease(),
+          onTapCancel: () => _handleRelease(),
+          child: Center(
+            child: Icon(
+              icon,
+              size:
+                  MediaQuery.of(context).size.width *
+                  0.06, // Responsive icon size
+              color: Theme.of(context).colorScheme.onPrimaryContainer,
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Slow', style: Theme.of(context).textTheme.bodySmall),
-              Text('Fast', style: Theme.of(context).textTheme.bodySmall),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // Text(
-          //   'Last Speed Command: $_lastSpeedCommand',
-          //   style: Theme.of(
-          //     context,
-          //   ).textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
-          // ),
-        ],
+        ),
       ),
     );
   }
@@ -308,9 +703,11 @@ class _CommandScreenState extends State<CommandScreen> {
         title: const Text('Gamepad Controller'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: Center(
+      body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: EdgeInsets.all(
+            MediaQuery.of(context).size.width * 0.04,
+          ), // Responsive padding
           child: ListView(
             children: [
               // Device info
@@ -360,70 +757,81 @@ class _CommandScreenState extends State<CommandScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Speed Control Section
-              _buildSpeedControl(),
-              const SizedBox(height: 24),
-
               // Gamepad
               Container(
-                padding: const EdgeInsets.all(32),
+                padding: EdgeInsets.all(
+                  MediaQuery.of(context).size.width * 0.06,
+                ), // Responsive padding
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.1),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
                 child: Column(
                   children: [
-                    Text(
-                      'Directional Controls',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Directional Controls',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        IconButton(
+                          onPressed: () => _showMotorConfigDialog(),
+                          icon: const Icon(Icons.edit),
+                          tooltip: 'Configure Motor Settings',
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 24),
 
                     // Up button
                     _buildDirectionButton(
-                      direction: 'UP',
+                      direction: _motorConfigs['UP']?.toCommand() ?? 'UP',
                       icon: Icons.keyboard_arrow_up,
                       color: Colors.blue,
-                      onPressed: () => _sendCommand('UP'),
+                      onPressed: () {},
                     ),
-                    const SizedBox(height: 16),
-
+                    SizedBox(
+                      height: MediaQuery.of(context).size.width * 0.04,
+                    ), // Responsive spacing
                     // Middle row with left and right buttons
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         _buildDirectionButton(
-                          direction: 'LEFT',
+                          direction: _motorConfigs['LEFT']?.toCommand() ?? 'LEFT',
                           icon: Icons.keyboard_arrow_left,
                           color: Colors.orange,
-                          onPressed: () => _sendCommand('LEFT'),
+                          onPressed: () {},
                         ),
-                        const SizedBox(width: 32),
+                        SizedBox(
+                          width: MediaQuery.of(context).size.width * 0.08,
+                        ), // Responsive spacing
                         _buildDirectionButton(
-                          direction: 'RIGHT',
+                          direction: _motorConfigs['RIGHT']?.toCommand() ?? 'RIGHT',
                           icon: Icons.keyboard_arrow_right,
                           color: Colors.orange,
-                          onPressed: () => _sendCommand('RIGHT'),
+                          onPressed: () {},
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-
+                    SizedBox(
+                      height: MediaQuery.of(context).size.width * 0.04,
+                    ), // Responsive spacing
                     // Down button
                     _buildDirectionButton(
-                      direction: 'DOWN',
+                      direction: _motorConfigs['DOWN']?.toCommand() ?? 'DOWN',
                       icon: Icons.keyboard_arrow_down,
                       color: Colors.blue,
-                      onPressed: () => _sendCommand('DOWN'),
+                      onPressed: () {},
                     ),
                   ],
                 ),
